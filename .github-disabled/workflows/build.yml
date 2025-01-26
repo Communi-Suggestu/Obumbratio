@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      tag: ${{ steps.tag.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: '0'
+
+      - name: Bump version and push tag
+        id: tag
+        uses: anothrNick/github-tag-action@1.71.0 # Don't use @master or @v1 unless you're happy to test the latest version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: false
+          DEFAULT_BUMP: patch
+          GIT_API_TAGGING: false
+          DRY_RUN: true
+
+  build:
+    needs:
+      - tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Read Gradle Properties File
+        uses: kurt-code/gha-properties@v0.0.1
+        id: read-properties
+        with:
+          operation: 'read'
+          file-path: 'gradle.properties'
+          keys: 'javaVersion'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ steps.read-properties.outputs.javaVersion }}
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build with Gradle
+        run: ./gradlew assemble
+        env:
+          VERSION: ${{ needs.tag.outputs.tag }}

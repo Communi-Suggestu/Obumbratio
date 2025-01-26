@@ -1,0 +1,10 @@
+[versions]
+neogradle = "7.+"
+loom = "1.+"
+
+[libraries]
+neogradle-common = { module = "net.neoforged.gradle:common", version.ref = "neogradle" }
+loom = { module = "net.fabricmc:fabric-loom", version.ref = "loom" }
+
+[bundles]
+platforms = ["neogradle-common", "loom"]
