@@ -1,5 +1,5 @@
 [versions]
-neogradle = "7.+"
+neogradle = "7.0.231-fix-multi-sdk-detection"
 loom = "1.+"
 
 [libraries]

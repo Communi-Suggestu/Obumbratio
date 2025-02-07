@@ -1,28 +1,33 @@
 package com.communi.suggestu.obumbratio;
 
+import com.communi.suggestu.obumbratio.extensions.ShadersExtension;
+import com.communi.suggestu.obumbratio.model.ConfigurationSetup;
+import com.communi.suggestu.obumbratio.model.Implementation;
+import com.communi.suggestu.obumbratio.model.Platform;
+import com.communi.suggestu.obumbratio.model.RunConfiguration;
+import com.communi.suggestu.obumbratio.tasks.InstallMods;
+import com.communi.suggestu.obumbratio.utils.RepositoryUtils;
+import com.communi.suggestu.obumbratio.utils.RunUtils;
+import com.communi.suggestu.obumbratio.utils.SourceSetUtils;
 import net.fabricmc.loom.api.LoomGradleExtensionAPI;
 import net.fabricmc.loom.configuration.ide.RunConfigSettings;
 import net.neoforged.gradle.dsl.common.runs.run.Run;
 import net.neoforged.gradle.dsl.common.runs.run.RunManager;
 import org.apache.commons.lang3.StringUtils;
-import org.gradle.api.*;
-import org.gradle.api.artifacts.Configuration;
-import org.gradle.api.artifacts.Dependency;
-import org.gradle.api.file.*;
+import org.gradle.api.InvalidUserDataException;
+import org.gradle.api.Plugin;
+import org.gradle.api.Project;
 import org.gradle.api.problems.Problems;
 import org.gradle.api.provider.Property;
-import org.gradle.api.provider.Provider;
 import org.gradle.api.provider.SetProperty;
-import org.gradle.api.tasks.*;
+import org.gradle.api.tasks.TaskProvider;
 import org.jetbrains.annotations.NotNull;
 
 import javax.inject.Inject;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Consumer;
-import java.util.function.Function;
+import java.util.function.BiConsumer;
 
 @SuppressWarnings("UnstableApiUsage")
 public abstract class ProjectPlugin implements Plugin<Project> {
@@ -30,30 +35,12 @@ public abstract class ProjectPlugin implements Plugin<Project> {
     @Override
     public void apply(@NotNull final Project project) {
 
-        project.getRepositories().maven(repo -> {
-            repo.setUrl("https://ldtteam.jfrog.io/ldtteam/modding/");
-            repo.setName("LDTTeam - Modding");
-        });
-        project.getRepositories().exclusiveContent(content -> {
-            content.forRepository(() -> project.getRepositories().maven(repo -> {
-                repo.setUrl("https://api.modrinth.com/maven");
-                repo.setName("Modrinth");
-            }));
-            content.filter(filter -> {
-                filter.includeGroup("maven.modrinth");
-            });
-        });
-        project.getRepositories().maven(repo -> {
-            repo.setUrl("https://maven.su5ed.dev/releases");
-            repo.setName("Su5ed");
-        });
+        RepositoryUtils.configureRepositories(project);
 
-        final PlatformConfigurations configurations = getConfigurations(project);
-        final Configuration downloadingConfiguration = project.getConfigurations().detachedConfiguration();
-
-        final ShadersExtension extension = project.getExtensions().create("shaders", ShadersExtension.class, project, (Consumer<ShadersExtension>) extension1 -> {
-            final ConfigurationSetup setup = extension1.getPlatform().isNeoForge() ? configurations.neoForge() : configurations.fabric();
-            configureDependencies(project, extension1, setup, downloadingConfiguration);
+        final ShadersExtension extension = project.getExtensions().create("shaders", ShadersExtension.class, project, (BiConsumer<ShadersExtension, Implementation>) (shaders, implementation) -> {
+            SourceSetUtils.getOrCreateShaderSourceSetIn(project, shaders.getPlatform(), implementation);
+            getOrCreateRunConfigurations(project, shaders, implementation);
+            configureDependencies(project, shaders, implementation, SourceSetUtils.getConfigurationFor(project, shaders.getPlatform(), implementation));
         });
 
         configureConventions(project, extension);
@@ -73,58 +60,56 @@ public abstract class ProjectPlugin implements Plugin<Project> {
                 });
             }
 
-            if (extension.getImplementation() == null) {
+            if (extension.getImplementations().isEmpty()) {
                 throw getProblems().getReporter().throwing(spec -> {
                     spec.id("obumbratio.shaders.implementation.missing", "Implementation is missing");
                     spec.details("Implementation is required to be set");
-                    spec.solution("Set the implementation using the `implementation` method");
+                    spec.solution("Set at least one implementation using the `implementation` method");
                     spec.withException(new InvalidUserDataException("Implementation is required to be set"));
                 });
             }
 
-            final Platform platform = extension.getPlatform();
-            final Implementation implementation = extension.getImplementation();
-            if (!implementation.isSupported(platform)) {
-                throw getProblems().getReporter().throwing(spec -> {
-                    spec.id("obumbratio.shaders.implementation.unsupported", "Implementation is unsupported");
-                    spec.details("Implementation is not supported for the platform");
-                    spec.solution("Set a supported implementation using the `implementation` method");
-                    spec.withException(new InvalidUserDataException("Implementation is not supported for the platform"));
-                });
-            }
+            extension.getImplementations().forEach(implementation -> {
+                final ConfigurationSetup configurationSetup = SourceSetUtils.getConfigurationFor(p, extension.getPlatform(), implementation);
 
-            validateRequiredVersions(extension);
-
-            if (!downloadingConfiguration.getDependencies().isEmpty()) {
-                final Set<RunConfiguration> runs = getRunConfigurations(p, extension);
-                if (runs.isEmpty()) {
+                final Platform platform = extension.getPlatform();
+                if (!implementation.isSupported(platform)) {
                     throw getProblems().getReporter().throwing(spec -> {
-                        spec.id("obumbratio.shaders.runs.missing", "Runs are missing");
-                        spec.details("Runs are required to be set");
-                        spec.solution("Add runs using the `run` method");
-                        spec.withException(new InvalidUserDataException("Runs are required to be set"));
+                        spec.id("obumbratio.shaders.implementation.unsupported", "Implementation is unsupported");
+                        spec.details("Implementation is not supported for the platform");
+                        spec.solution("Set a supported implementation using the `implementation` method");
+                        spec.withException(new InvalidUserDataException("Implementation is not supported for the platform"));
                     });
                 }
 
-                final TaskProvider<?> processResources = p.getTasks().named("processResources");
+                validateRequiredVersions(extension);
 
-                runs.forEach(run -> {
-                    final String taskName = "installMods%s".formatted(StringUtils.capitalize(run.name));
-                    final TaskProvider<InstallMods> installMods = p.getTasks().register(taskName, InstallMods.class, task -> {
-                        task.getModsDirectory().set(run.workDirectory().map(directory -> directory.dir("mods")));
-                        task.getModFiles().from(downloadingConfiguration);
+                final Set<RunConfiguration> runs = getOrCreateRunConfigurations(p, extension, implementation);
+                if (!configurationSetup.modDownloads().getDependencies().isEmpty()) {
+                    if (runs.isEmpty()) {
+                        throw getProblems().getReporter().throwing(spec -> {
+                            spec.id("obumbratio.shaders.runs.missing", "Runs are missing");
+                            spec.details("Runs are required to be set");
+                            spec.solution("Add runs using the `run` method");
+                            spec.withException(new InvalidUserDataException("Runs are required to be set"));
+                        });
+                    }
+
+                    final TaskProvider<?> processResources = p.getTasks().named("processResources");
+
+                    runs.forEach(run -> {
+                        final String taskName = "installMods%s".formatted(StringUtils.capitalize(run.name()));
+                        final TaskProvider<InstallMods> installMods = p.getTasks().register(taskName, InstallMods.class, task -> {
+                            task.getModsDirectory().set(run.workDirectory().map(directory -> directory.dir("mods")));
+                            task.getModFiles().from(configurationSetup.modDownloads());
+                        });
+
+                        processResources.configure(task -> {
+                            task.dependsOn(installMods);
+                        });
                     });
-
-                    processResources.configure(task -> {
-                        task.dependsOn(installMods);
-                    });
-                });
-            }
-
-            final SourceSetContainer sourceSets = p.getExtensions().getByType(SourceSetContainer.class);
-            final SourceSet main = sourceSets.getByName(SourceSet.MAIN_SOURCE_SET_NAME);
-            main.getJava().srcDir("src/shaders/java");
-            main.getResources().srcDir("src/shaders/resources");
+                }
+            });
         });
     }
 
@@ -144,12 +129,6 @@ public abstract class ProjectPlugin implements Plugin<Project> {
         extension.getVersions().getIris().getAntlr4Runtime().convention(project.getProviders().gradleProperty("compat.shaders.versions.iris.antlr4.runtime"));
         extension.getVersions().getIris().getGlslTransformer().convention(project.getProviders().gradleProperty("compat.shaders.versions.iris.glsl.transformer"));
         extension.getVersions().getIris().getJCpp().convention(project.getProviders().gradleProperty("compat.shaders.versions.iris.jcpp"));
-
-        extension.getRuns().convention(
-                project.getProviders().gradleProperty("compat.shaders.runs")
-                        .map(value -> List.of(value.split(",")))
-                        .orElse(List.of("client"))
-        );
     }
 
     private boolean parseProperty(Project project, String key) {
@@ -164,74 +143,38 @@ public abstract class ProjectPlugin implements Plugin<Project> {
     @Inject
     public abstract Problems getProblems();
 
-    private void configureDependencies(Project project, ShadersExtension extension, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
+    private void configureDependencies(Project project, ShadersExtension extension, Implementation implementation, ConfigurationSetup configurations) {
         if (extension.getPlatform().isNeoForge()) {
-            if (!extension.getImplementation().isSupported(Platform.NEOFORGE)) {
+            if (!implementation.isSupported(Platform.NEOFORGE)) {
                 return;
             }
 
-            final Implementation implementation = extension.getImplementation();
-            implementation.registerNeoForgeDependencies(project, extension.getVersions(), configurations, downloadingConfiguration);
+            implementation.registerNeoForgeDependencies(project, extension.getVersions(), configurations);
         } else if (extension.getPlatform().isFabric()) {
-            if (!extension.getImplementation().isSupported(Platform.FARBIC)) {
+            if (!implementation.isSupported(Platform.FARBIC)) {
                 return;
             }
 
-            final Implementation implementation = extension.getImplementation();
-            implementation.registerFabricDependencies(project, extension.getVersions(), configurations, downloadingConfiguration);
+            implementation.registerFabricDependencies(project, extension.getVersions(), configurations);
         }
 
-        extension.getPlatform().configureIrisDependencies(project, extension, configurations, downloadingConfiguration);
+        extension.getPlatform().configureIrisDependencies(project, extension, implementation, configurations);
     }
 
-    private record PlatformConfigurations(ConfigurationSetup neoForge, ConfigurationSetup fabric) {}
 
-    private record ConfigurationSetup(Configuration localRuntimeOnly, Configuration localCompileOnly) {}
-
-    private PlatformConfigurations getConfigurations(Project project) {
-        return new PlatformConfigurations(
-                new ConfigurationSetup(
-                        project.getConfigurations().getByName("compileOnly"),
-                        project.getConfigurations().maybeCreate("localRuntime")
-                ),
-                new ConfigurationSetup(
-                        project.getConfigurations().maybeCreate("modCompileOnly"),
-                        project.getConfigurations().maybeCreate("modLocalRuntime")
-                )
-        );
-    }
-
-    private record RunConfiguration(String name, Provider<Directory> workDirectory) {
-        private RunConfiguration(Run run) {
-            this(run.getName(), run.getWorkingDirectory());
-        }
-
-        private RunConfiguration(RunConfigSettings runConfigSettings) {
-            this(
-                    runConfigSettings.getName(),
-                    runConfigSettings.getProject().provider(
-                            () -> runConfigSettings.getProject().getLayout().getProjectDirectory().dir(
-                                    runConfigSettings.getRunDir()
-                            )
-                    )
-            );
-        }
-    }
-
-    private Set<RunConfiguration> getRunConfigurations(Project project, ShadersExtension extension) {
-        final Platform platform = extension.getPlatform();
-
+    private Set<RunConfiguration> getOrCreateRunConfigurations(Project project, ShadersExtension extension, Implementation implementation) {
         if (!extension.getIsEnabled()) {
             return new HashSet<>();
         }
 
-        if (platform.isNeoForge()) {
-            return getNeoForgeRunConfigurations(project, extension.getRuns());
-        } else if (platform.isFabric()) {
-            return getFabricRunConfigurations(project, extension.getRuns());
-        }
-
-        return new HashSet<>();
+        return Set.of(
+                RunUtils.getOrCreateRunFor(
+                        project,
+                        extension.getPlatform(),
+                        implementation,
+                        SourceSetUtils.getOrCreateShaderSourceSetIn(project, extension.getPlatform(), implementation)
+                )
+        );
     }
 
     private Set<RunConfiguration> getNeoForgeRunConfigurations(Project project, final SetProperty<String> runNames) {
@@ -272,21 +215,24 @@ public abstract class ProjectPlugin implements Plugin<Project> {
     private void validateRequiredNeoForgeVersions(ShadersExtension extension) {
         validateRequiredIrisNeoForgeVersions(extension);
 
-        final Implementation implementation = extension.getImplementation();
-        if (implementation == Implementation.SODIUM) {
-            validateRequiredSodiumNeoForgeVersions(extension);
-        } else if (implementation == Implementation.EMBEDDIUM) {
-            validateRequiredEmbeddiumNeoForgeVersions(extension);
-        }
+        extension.getImplementations().forEach(implementation -> {
+            if (implementation == Implementation.SODIUM) {
+                validateRequiredSodiumNeoForgeVersions(extension);
+            } else if (implementation == Implementation.EMBEDDIUM) {
+                validateRequiredEmbeddiumNeoForgeVersions(extension);
+            }
+        });
     }
 
     private void validateRequiredFabricVersions(ShadersExtension extension) {
         validateRequiredIrisFabricVersions(extension);
 
-        final Implementation implementation = extension.getImplementation();
-        if (implementation == Implementation.SODIUM) {
-            validateRequiredSodiumFabricVersions(extension);
-        }
+
+        extension.getImplementations().forEach(implementation -> {
+            if (implementation == Implementation.SODIUM) {
+                validateRequiredSodiumFabricVersions(extension);
+            }
+        });
     }
 
     private void validateRequiredSodiumNeoForgeVersions(ShadersExtension extension) {
@@ -447,347 +393,4 @@ public abstract class ProjectPlugin implements Plugin<Project> {
         });
     }
 
-    public abstract static class ShadersExtension {
-
-        private final Consumer<ShadersExtension> configured;
-        private boolean isEnabled = false;
-        private Platform platform;
-        private Implementation implementation;
-        private Versions versions;
-
-        @Inject
-        public ShadersExtension(final Project project, Consumer<ShadersExtension> configured) {
-            this.configured = configured;
-            this.versions = project.getObjects().newInstance(Versions.class, project);
-        }
-
-        public boolean getIsEnabled() {
-            return isEnabled;
-        }
-
-        public void setIsEnabled(boolean enabled) {
-            isEnabled = enabled;
-            if (this.isEnabled && this.platform != null && this.implementation != null) {
-                configured.accept(this);
-            }
-        }
-
-        public void enabled(final boolean enabled) {
-            this.isEnabled = enabled;
-        }
-
-        public void enable() {
-            this.isEnabled = true;
-            configure();
-        }
-
-        private void configure() {
-            if (this.isEnabled && this.platform != null && this.implementation != null) {
-                configured.accept(this);
-            }
-        }
-
-        public void disable() {
-            this.isEnabled = false;
-        }
-
-        public Platform getPlatform() {
-            return platform;
-        }
-
-        public void setPlatform(Platform platform) {
-            this.platform = platform;
-            configure();
-        }
-
-        public void platform(Platform platform) {
-            setPlatform(platform);
-        }
-
-        public void neoforge() {
-            platform(Platform.NEOFORGE);
-        }
-
-        public void fabric() {
-            platform(Platform.FARBIC);
-        }
-
-        public Implementation getImplementation() {
-            return implementation;
-        }
-
-        public void setImplementation(Implementation implementation) {
-            this.implementation = implementation;
-            configure();
-        }
-
-        public void implementation(Implementation implementation) {
-            setImplementation(implementation);
-        }
-
-        public void sodium() {
-            implementation(Implementation.SODIUM);
-        }
-
-        public void embeddium() {
-            implementation(Implementation.EMBEDDIUM);
-        }
-
-        public Versions getVersions() {
-            return versions;
-        }
-
-        public void versions(final Action<Versions> configure) {
-            configure.execute(getVersions());
-        }
-
-        public abstract SetProperty<String> getRuns();
-
-        public void run(final String name) {
-            getRuns().add(name);
-        }
-
-        public void run(final Named named) {
-            run(named.getName());
-        }
-    }
-
-    public enum Platform {
-        FARBIC,
-        NEOFORGE;
-
-        public boolean isFabric() {
-            return this == FARBIC;
-        }
-
-        public boolean isNeoForge() {
-            return this == NEOFORGE;
-        }
-
-        private void configureIrisDependencies(Project project, ShadersExtension shadersExtension, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
-            if (this == FARBIC) {
-                configureIrisFabricDependencies(project, shadersExtension, configurations, downloadingConfiguration);
-            } else if (this == NEOFORGE) {
-                configureIrisNeoForgeDependencies(project, shadersExtension, configurations, downloadingConfiguration);
-            }
-        }
-
-        private void configureIrisFabricDependencies(Project project, ShadersExtension shadersExtension, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
-            final Versions versions = shadersExtension.getVersions();
-            final Provider<Dependency> iris =
-                    versions.getIris().getVersion().zip(
-                            versions.getMinecraft(),
-                            "maven.modrinth:iris:%s+%s-fabric"::formatted
-                    ).map(project.getDependencies()::create);
-            final Provider<Dependency> antlr4Runtime =
-                    versions.getIris().getAntlr4Runtime()
-                                    .map("org.antlr:antlr4-runtime:%s"::formatted)
-                                    .map(project.getDependencies()::create);
-            final Provider<Dependency> glslTransformer =
-                    versions.getIris().getGlslTransformer()
-                                    .map("io.github.douira:glsl-transformer:%s"::formatted)
-                                    .map(project.getDependencies()::create);
-            final Provider<Dependency> jCpp =
-                    versions.getIris().getJCpp()
-                                    .map("org.anarres:jcpp:%s"::formatted)
-                                    .map(project.getDependencies()::create);
-
-            configurations.localCompileOnly().getDependencies().addLater(iris);
-            configurations.localCompileOnly().getDependencies().addLater(antlr4Runtime);
-            configurations.localCompileOnly().getDependencies().addLater(glslTransformer);
-            configurations.localCompileOnly().getDependencies().addLater(jCpp);
-
-            configurations.localRuntimeOnly().getDependencies().addLater(iris);
-            configurations.localRuntimeOnly().getDependencies().addLater(antlr4Runtime);
-            configurations.localRuntimeOnly().getDependencies().addLater(glslTransformer);
-            configurations.localRuntimeOnly().getDependencies().addLater(jCpp);
-        }
-
-        private void configureIrisNeoForgeDependencies(Project project, ShadersExtension shadersExtension, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
-            final Versions versions = shadersExtension.getVersions();
-            final Provider<Dependency> iris =
-                    versions.getIris().getVersion().zip(
-                            versions.getMinecraft(),
-                            "maven.modrinth:iris:%s+%s-neoforge"::formatted
-                    ).map(project.getDependencies()::create);
-
-            configurations.localCompileOnly().getDependencies().addLater(iris);
-
-            final Implementation implementation = shadersExtension.getImplementation();
-            if (implementation.requiresDownloadedIris()) {
-                downloadingConfiguration.getDependencies().addLater(iris);
-            } else {
-                configurations.localRuntimeOnly().getDependencies().addLater(iris);
-            }
-        }
-    }
-
-    public enum Implementation {
-        SODIUM(p -> true),
-        EMBEDDIUM(Platform::isNeoForge);
-
-        private final Function<Platform, Boolean> supportedPlatforms;
-
-        Implementation(Function<Platform, Boolean> supportedPlatforms) {
-            this.supportedPlatforms = supportedPlatforms;
-        }
-
-        private boolean isSupported(Platform platform) {
-            return supportedPlatforms.apply(platform);
-        }
-
-        private boolean requiresDownloadedIris() {
-            return this == EMBEDDIUM;
-        }
-
-        private void registerFabricDependencies(Project project, Versions versions, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
-            if (this == SODIUM) {
-                registerSodiumFabricDependencies(project, versions, configurations, downloadingConfiguration);
-            }
-        }
-
-        private void registerNeoForgeDependencies(Project project, Versions versions, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
-            if (this == SODIUM) {
-                registerSodiumNeoForgeDependencies(project, versions, configurations, downloadingConfiguration);
-            } else if (this == EMBEDDIUM) {
-                registerEmbeddiumNeoForgeDependencies(project, versions, configurations, downloadingConfiguration);
-            }
-        }
-
-        private static void registerSodiumFabricDependencies(Project project, Versions versions, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
-            final Provider<Dependency> sodium =
-                    versions.getMinecraft().zip(
-                            versions.getSodium().getVersion(),
-                            "maven.modrinth:sodium:mc%s-%s-fabric"::formatted
-                    ).map(project.getDependencies()::create);
-
-            configurations.localCompileOnly().getDependencies().addLater(sodium);
-            configurations.localRuntimeOnly().getDependencies().addLater(sodium);
-        }
-
-        private static void registerSodiumNeoForgeDependencies(Project project, Versions versions, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
-            final Provider<Dependency> sodium =
-                    versions.getMinecraft().zip(
-                            versions.getSodium().getVersion(),
-                            "maven.modrinth:sodium:mc%s-%s-neoforge"::formatted
-                    ).map(project.getDependencies()::create);
-            final Provider<Dependency> fabricApi =
-                    versions.getSodium().getFabricApi()
-                                    .map("org.sinytra.forgified-fabric-api:fabric-api-base:%s"::formatted)
-                                    .map(project.getDependencies()::create);
-            final Provider<Dependency> fabricRenderer =
-                    versions.getSodium().getFabricRenderer()
-                                    .map("org.sinytra.forgified-fabric-api:fabric-renderer-api-v1:%s"::formatted)
-                                    .map(project.getDependencies()::create);
-
-            configurations.localCompileOnly().getDependencies().addLater(sodium);
-            configurations.localRuntimeOnly().getDependencies().addLater(sodium);
-
-            configurations.localCompileOnly().getDependencies().addLater(fabricApi);
-            configurations.localCompileOnly().getDependencies().addLater(fabricRenderer);
-        }
-
-        private static void registerEmbeddiumNeoForgeDependencies(Project project, Versions versions, ConfigurationSetup configurations, Configuration downloadingConfiguration) {
-            final Provider<Dependency> embeddium =
-                    versions.getEmbeddium()
-                            .zip(
-                                    versions.getMinecraft(),
-                                    "maven.modrinth:embeddium:%s+mc%s"::formatted
-                            ).map(project.getDependencies()::create);
-            final Provider<Dependency> monocle =
-                    versions.getMonocle()
-                            .map("maven.modrinth:monocle-iris:%s"::formatted)
-                            .map(project.getDependencies()::create);
-
-            configurations.localCompileOnly().getDependencies().addLater(embeddium);
-            configurations.localRuntimeOnly().getDependencies().addLater(embeddium);
-
-            //Monocle has a special transformer which means it needs to be added to the downloading configuration
-            configurations.localCompileOnly().getDependencies().addLater(monocle);
-            downloadingConfiguration.getDependencies().addLater(monocle);
-        }
-    }
-
-    public abstract static class Versions {
-
-        private final SodiumVersions sodium;
-        private final IrisVersions iris;
-
-        @Inject
-        public Versions(final Project project) {
-            this.sodium = project.getObjects().newInstance(SodiumVersions.class);
-            this.iris = project.getObjects().newInstance(IrisVersions.class);
-        }
-
-        public abstract Property<String> getMinecraft();
-
-        public SodiumVersions getSodium() {
-            return sodium;
-        }
-
-        public void sodium(final Action<SodiumVersions> configure) {
-            configure.execute(getSodium());
-        }
-
-        public abstract Property<String> getEmbeddium();
-
-        public IrisVersions getIris() {
-            return iris;
-        }
-
-        public void iris(final Action<IrisVersions> configure) {
-            configure.execute(getIris());
-        }
-
-        public abstract Property<String> getMonocle();
-    }
-
-    public abstract static class SodiumVersions {
-
-        public abstract Property<String> getVersion();
-
-        public abstract Property<String> getFabricApi();
-
-        public abstract Property<String> getFabricRenderer();
-    }
-
-    public abstract static class IrisVersions {
-
-        public abstract Property<String> getVersion();
-
-        public abstract Property<String> getAntlr4Runtime();
-
-        public abstract Property<String> getGlslTransformer();
-
-        public abstract Property<String> getJCpp();
-    }
-
-    public abstract static class InstallMods extends DefaultTask {
-
-        @Inject
-        public InstallMods() {
-            setGroup("obumbratio");
-            setDescription("Installs mods for the project");
-        }
-
-        @Inject
-        public abstract FileSystemOperations getFileSystemOperations();
-
-        @TaskAction
-        public void install() {
-            getModFiles().getFiles().forEach(file -> {
-                getFileSystemOperations().copy(spec -> {
-                    spec.from(file);
-                    spec.into(getModsDirectory());
-                });
-            });
-        }
-
-        @OutputDirectory
-        public abstract DirectoryProperty getModsDirectory();
-
-        @InputFiles
-        @PathSensitive(PathSensitivity.NAME_ONLY)
-        public abstract ConfigurableFileCollection getModFiles();
-    }
 }
