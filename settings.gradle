@@ -15,5 +15,5 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'Obumbratio'
+rootProject.name = 'obumbratio'
 include('plugin')
