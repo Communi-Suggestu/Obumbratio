@@ -4,6 +4,7 @@ import com.communi.suggestu.obumbratio.model.ConfigurationSetup;
 import com.communi.suggestu.obumbratio.model.Implementation;
 import com.communi.suggestu.obumbratio.model.Platform;
 import net.fabricmc.loom.api.LoomGradleExtensionAPI;
+import net.fabricmc.loom.api.RemapConfigurationSettings;
 import org.apache.commons.lang3.StringUtils;
 import org.gradle.api.Project;
 import org.gradle.api.artifacts.Configuration;
@@ -24,6 +25,7 @@ public final class SourceSetUtils {
         throw new IllegalStateException("Tried to instantiate: 'SourceSetUtils', but this is a utility class.");
     }
 
+    @SuppressWarnings("UnstableApiUsage")
     public static SourceSet getOrCreateShaderSourceSetIn(final Project project, final Platform platform, final Implementation implementation) {
         final SourceSetContainer sourceSets = project.getExtensions().getByType(SourceSetContainer.class);
         final SourceSet main = sourceSets.getByName(SourceSet.MAIN_SOURCE_SET_NAME);
@@ -90,25 +92,31 @@ public final class SourceSetUtils {
                         sourceSet.getRuntimeClasspathConfigurationName()
                 ).extendsFrom(sourceSetLocalRuntime);
 
-                api.addRemapConfiguration(
+                final RemapConfigurationSettings compileOnlySettings = api.addRemapConfiguration(
                         modCompileOnly,
                         config -> {
                             config.getSourceSet().set(sourceSet);
-                            config.getTargetConfigurationName().set(sourceSet.getCompileClasspathConfigurationName());
+                            config.getTargetConfigurationName().set("api");
                             config.getOnCompileClasspath().set(false);
                             config.getOnRuntimeClasspath().set(false);
                         }
                 );
 
-                api.addRemapConfiguration(
+                final Configuration mappedCompileOnly = project.getConfigurations().maybeCreate(compileOnlySettings.getRemappedConfigurationName());
+                project.getConfigurations().getByName(sourceSet.getCompileOnlyConfigurationName()).extendsFrom(mappedCompileOnly);
+
+                final RemapConfigurationSettings localRuntimeSettings = api.addRemapConfiguration(
                         modLocalRuntime,
                         config -> {
                             config.getSourceSet().set(sourceSet);
-                            config.getTargetConfigurationName().set(sourceSetLocalRuntime.getName());
+                            config.getTargetConfigurationName().set("api");
                             config.getOnCompileClasspath().set(false);
                             config.getOnRuntimeClasspath().set(false);
                         }
                 );
+
+                final Configuration mappedLocalRuntime = project.getConfigurations().maybeCreate(localRuntimeSettings.getRemappedConfigurationName());
+                sourceSetLocalRuntime.extendsFrom(mappedLocalRuntime);
             }
         }
 

@@ -39,6 +39,7 @@ public final class RunUtils {
             run.source(implementationSourceSet);
             run.client();
             run.ideConfigGenerated(true);
+            run.setConfigName("Fabric Client with " + StringUtils.capitalize(implementation.name().toLowerCase()));
         }));
     }
 
