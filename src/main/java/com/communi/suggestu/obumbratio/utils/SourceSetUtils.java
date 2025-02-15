@@ -41,12 +41,10 @@ public final class SourceSetUtils {
 
         final SourceSet sourceSet = sourceSets.create(sourceSetName);
 
-        final List<File> srcDirs =  new ArrayList<>(
-                List.of(project.file("src/shaders/%s/java".formatted(implementation.name().toLowerCase(Locale.ROOT))))
-        );
-        final List<File> resourcesDirs =  new ArrayList<>(
-                List.of(project.file("src/shaders/%s/resources".formatted(implementation.name().toLowerCase(Locale.ROOT))))
-        );
+        final List<File> srcDirs = new ArrayList<>();
+        srcDirs.add(project.file("src/shaders/%s/java".formatted(implementation.name().toLowerCase(Locale.ROOT))));
+        final List<File> resourcesDirs = new ArrayList<>();
+        resourcesDirs.add(project.file("src/shaders/%s/resources".formatted(implementation.name().toLowerCase(Locale.ROOT))));
 
         sourceSet.getJava().setSrcDirs(srcDirs);
         sourceSet.getResources().setSrcDirs(resourcesDirs);
