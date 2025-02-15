@@ -16,6 +16,8 @@ import org.gradle.api.tasks.SourceSetContainer;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.jvm.tasks.Jar;
 
+import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -39,12 +41,15 @@ public final class SourceSetUtils {
 
         final SourceSet sourceSet = sourceSets.create(sourceSetName);
 
-        sourceSet.getJava().setSrcDirs(
+        final List<File> srcDirs =  new ArrayList<>(
                 List.of(project.file("src/shaders/%s/java".formatted(implementation.name().toLowerCase(Locale.ROOT))))
         );
-        sourceSet.getResources().setSrcDirs(
+        final List<File> resourcesDirs =  new ArrayList<>(
                 List.of(project.file("src/shaders/%s/resources".formatted(implementation.name().toLowerCase(Locale.ROOT))))
         );
+
+        sourceSet.getJava().setSrcDirs(srcDirs);
+        sourceSet.getResources().setSrcDirs(resourcesDirs);
 
         final JavaPluginExtension javaPlugin = project.getExtensions().getByType(JavaPluginExtension.class);
         javaPlugin.registerFeature(
