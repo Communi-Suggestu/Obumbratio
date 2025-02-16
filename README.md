@@ -104,5 +104,5 @@ compat.shaders.versions.monocle=0.1.8
 > [!NOTE]  
 > The DSL overwrites the gradle properties, as they are just a convention.
 
-> [!INFORMATION]  
+> [!TIP]  
 > Not all versions need to be set, if you are not running on a multi-platform architecture.
