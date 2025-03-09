@@ -88,7 +88,6 @@ public enum Implementation {
         configurations.localRuntimeOnly().getDependencies().addLater(embeddium);
 
         //Monocle has a special transformer which means it needs to be added to the downloading configuration
-        configurations.localCompileOnly().getDependencies().addLater(monocle);
         configurations.modDownloads().getDependencies().addLater(monocle);
     }
 }
