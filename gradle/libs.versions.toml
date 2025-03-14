@@ -1,6 +1,6 @@
 [versions]
 neogradle = "7.0.181"
-loom = "1.+"
+loom = "1.10.4"
 
 [libraries]
 neogradle-common = { module = "net.neoforged.gradle:common", version.ref = "neogradle" }
