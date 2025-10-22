@@ -1,5 +1,5 @@
 [versions]
-neogradle = "7.1.0"
+neogradle = "7.1.+"
 loom = "1.11.8"
 
 [libraries]
