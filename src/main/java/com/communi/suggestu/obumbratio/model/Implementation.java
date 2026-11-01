@@ -57,8 +57,8 @@ public enum Implementation {
         });
 
         final Provider<Dependency> sodium =
-                versions.getMinecraft().zip(
-                        versions.getSodium().getVersion(),
+                versions.getSodium().getVersion().zip(
+                        versions.getMinecraft(),
                         "net.caffeinemc:sodium-neoforge:%s+mc%s"::formatted
                 ).map(project.getDependencies()::create);
 
