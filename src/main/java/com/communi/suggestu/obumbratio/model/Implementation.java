@@ -51,25 +51,19 @@ public enum Implementation {
     }
 
     public static void registerSodiumNeoForgeDependencies(Project project, ShadersExtension.Versions versions, ConfigurationSetup configurations) {
+        project.getRepositories().maven(m -> {
+            m.setName("CaffeineMC");
+            m.setUrl("https://maven.caffeinemc.net/releases");
+        });
+
         final Provider<Dependency> sodium =
                 versions.getMinecraft().zip(
                         versions.getSodium().getVersion(),
-                        "maven.modrinth:sodium:mc%s-%s-neoforge"::formatted
+                        "net.caffeinemc:sodium-neoforge:%s+mc%s"::formatted
                 ).map(project.getDependencies()::create);
-        final Provider<Dependency> fabricApi =
-                versions.getSodium().getFabricApi()
-                        .map("org.sinytra.forgified-fabric-api:fabric-api-base:%s"::formatted)
-                        .map(project.getDependencies()::create);
-        final Provider<Dependency> fabricRenderer =
-                versions.getSodium().getFabricRenderer()
-                        .map("org.sinytra.forgified-fabric-api:fabric-renderer-api-v1:%s"::formatted)
-                        .map(project.getDependencies()::create);
 
         configurations.localCompileOnly().getDependencies().addLater(sodium);
         configurations.localRuntimeOnly().getDependencies().addLater(sodium);
-
-        configurations.localCompileOnly().getDependencies().addLater(fabricApi);
-        configurations.localCompileOnly().getDependencies().addLater(fabricRenderer);
     }
 
     public static void registerEmbeddiumNeoForgeDependencies(Project project, ShadersExtension.Versions versions, ConfigurationSetup configurations) {
